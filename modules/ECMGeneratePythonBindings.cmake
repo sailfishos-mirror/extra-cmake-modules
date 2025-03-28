@@ -171,4 +171,15 @@ function(ecm_generate_python_bindings)
         COMMENT "Building Python Wheel"
     )
 
+    # Install header
+    list(GET PYSIDE_INCLUDE_DIRS 0 PYSIDE_INCLUDE_DIR)
+    string(TOLOWER ${PB_PACKAGE_NAME} lower_package_name)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${PB_PACKAGE_NAME}/${lower_package_name}_python.h
+            DESTINATION "${PYSIDE_INCLUDE_DIR}/${PB_PACKAGE_NAME}/")
+
+    # Install typesystem file to the public folder
+    if(NOT ${PB_TYPESYSTEM} MATCHES "bindings.xml$")
+        install(FILES "${PB_TYPESYSTEM}" DESTINATION ${PYSIDE_TYPESYSTEMS})
+    endif()
+
 endfunction()
