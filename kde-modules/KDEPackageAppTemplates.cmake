@@ -16,7 +16,7 @@ install project templates compatible with the format used by
 KApptemplate and KDevelop. Useful for providing minimal examples
 for the usage of the KDE Frameworks.
 
-This module provides the following function:
+This module provides the following functions:
 
 ::
 
@@ -68,9 +68,30 @@ Unless setting KDE_INSTALL_APP_TEMPLATES, this function is skipped when cross-co
 
 
 Since 5.18
+
+
+::
+
+  kde_test_app_template(TEMPLATE <template> NAME <name>)
+
+``TEMPLATE`` is the name of the application template to test.
+  This can both be a template that is being build as part of this project
+  or one that is installed on the system.
+``NAME`` is the application name to instantiate the template with.
+
+This instantiates the given template and adds a test for verifying
+the result compiles.
+
+This only works for templates with a ``CMakeLists.txt`` file in their
+top-level folder.
+
+Since 6.28
+
 #]=======================================================================]
 
 cmake_policy(VERSION 3.16)
+
+include(KDEInstallDirs)
 
 if(NOT CMAKE_CROSSCOMPILING)
    set(default_kde_install_app_templates ON)
@@ -120,7 +141,7 @@ function(kde_package_app_templates)
     foreach(_templateName ${ARG_TEMPLATES})
         get_filename_component(_tmp_file ${_templateName} ABSOLUTE)
         get_filename_component(_baseName ${_tmp_file} NAME_WE)
-        set(_template ${CMAKE_CURRENT_BINARY_DIR}/${_baseName}.tar.bz2)
+        set(_template ${CMAKE_BINARY_DIR}/${KDE_INSTALL_KAPPTEMPLATESDIR}/${_baseName}.tar.bz2)
 
         # also enlist directories as deps to catch file removals
         file(GLOB_RECURSE _subdirs_entries LIST_DIRECTORIES true CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_templateName}/*")
@@ -140,6 +161,7 @@ function(kde_package_app_templates)
 
             # Make tar archive reproducible, the arguments are only available with GNU tar
             add_custom_command(OUTPUT ${_template}
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/${KDE_INSTALL_KAPPTEMPLATESDIR}
                 COMMAND ${_tar_executable} ARGS
                    --exclude .kdev_ignore --exclude .svn
                    --sort=name
@@ -153,6 +175,7 @@ function(kde_package_app_templates)
             )
         else()
             add_custom_command(OUTPUT ${_template}
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/${KDE_INSTALL_KAPPTEMPLATESDIR}
                 COMMAND ${CMAKE_COMMAND} -E tar "cvfj" ${_template} .
                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${_templateName}
                 DEPENDS ${_subdirs_entries}
@@ -163,4 +186,54 @@ function(kde_package_app_templates)
         set_property(DIRECTORY APPEND PROPERTY ADDITIONAL_MAKE_CLEAN_FILES "${_template}")
 
     endforeach()
+endfunction()
+
+function(kde_test_app_template)
+    if(CMAKE_CROSSCOMPILING)
+        message("Skipping template test during cross-compilation.")
+    endif()
+    find_program(_kapptemplate_executable NAMES kapptemplate)
+    if(NOT _kapptemplate_executable)
+        message("Skipping template test: kapptemplate executable not found.")
+        return()
+    endif()
+
+    set(_oneValueArgs TEMPLATE NAME)
+    cmake_parse_arguments(ARG "" "${_oneValueArgs}" "" ${ARGN})
+
+    # kapptemplate uses the lower-case application name for the output directory
+    string(TOLOWER ${ARG_NAME} _lc_app_name)
+
+    # if we use a template we build ourselves, add a proper dependency to it
+    if (TARGET ${ARG_TEMPLATE}_kapptemplate)
+        set(_depends_args DEPENDS ${CMAKE_BINARY_DIR}/${KDE_INSTALL_KAPPTEMPLATESDIR}/${ARG_TEMPLATE}.tar.bz2)
+    endif()
+
+    # run kapptemplate to expand the template
+    # adjust the environment variable accordingly to also find templates in our build dir
+    add_custom_target(${ARG_TEMPLATE}_${ARG_NAME}_generated ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/template-test/${ARG_TEMPLATE}/${_lc_app_name}/CMakeLists.txt)
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/template-test/${ARG_TEMPLATE}/${_lc_app_name}/CMakeLists.txt
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/template-test/${ARG_TEMPLATE}/${_lc_app_name}"
+        COMMAND ${CMAKE_COMMAND} -E env --modify "XDG_DATA_DIRS=path_list_prepend:${CMAKE_BINARY_DIR}/${KDE_INSTALL_DATAROOTDIR}"
+            ${_kapptemplate_executable} ARGS
+            "${ARG_NAME}"
+            "${CMAKE_CURRENT_BINARY_DIR}/template-test/${ARG_TEMPLATE}"
+            "Au Thor"
+            "null@kde.org"
+            "42.23.0"
+            ${ARG_TEMPLATE}
+        ${_depends_args}
+    )
+
+    # run cmake on the expanded template and compile it
+    add_test(TemplateTest_${ARG_TEMPLATE}_${ARG_NAME} ${CMAKE_CTEST_COMMAND}
+        --build-and-test
+        "${CMAKE_CURRENT_BINARY_DIR}/template-test/${ARG_TEMPLATE}/${_lc_app_name}"
+        "${CMAKE_CURRENT_BINARY_DIR}/template-build/${ARG_TEMPLATE}/${_lc_app_name}"
+        --build-generator ${CMAKE_GENERATOR}
+        --build-makeprogram ${CMAKE_MAKE_PROGRAM}
+        --build-noclean
+    )
+
+    set_property(DIRECTORY APPEND PROPERTY ADDITIONAL_MAKE_CLEAN_FILES template-test template-build)
 endfunction()
